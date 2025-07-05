@@ -1,4 +1,4 @@
-name: Enable RDP to Windows Runner
+name: RDP via Ngrok
 
 on:
   workflow_dispatch:
@@ -8,48 +8,46 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Download and extract ngrok
+      - name: Enable RDP & set password
+        run: |
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          net user runneradmin MySecureP@ssw0rd!
+
+      - name: Download and setup ngrok
         run: |
           Invoke-WebRequest -Uri https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
           Expand-Archive ngrok.zip -DestinationPath ngrok
           Move-Item ngrok\ngrok.exe $env:USERPROFILE\ngrok.exe
+          & "$env:USERPROFILE\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
 
-      - name: Authenticate ngrok
+      - name: Start ngrok TCP tunnel
         run: |
-          $env:NGROK_AUTH_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
-          & "$env:USERPROFILE\ngrok.exe" authtoken $env:NGROK_AUTH_TOKEN
-
-      - name: Enable RDP
-        run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-      - name: Start ngrok tunnel and wait
-        run: |
-          Start-Process -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput ngrok.log
-          Write-Host "Waiting for ngrok to initialize..."
+          Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389" -RedirectStandardOutput ngrok.log
           Start-Sleep -Seconds 15
 
-      - name: Read tunnel address
+      - name: Get ngrok tunnel info
         run: |
           $retries = 10
           $success = $false
 
           for ($i = 0; $i -lt $retries; $i++) {
             try {
-              $tunnel = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
-              $tcpAddr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
-              Write-Host "`n✅ RDP Address: $tcpAddr"
-              Write-Host "ℹ️ Username: runneradmin"
+              $response = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+              $tcpUrl = $response.tunnels[0].public_url
+              $address = $tcpUrl -replace "tcp://", ""
+              Write-Host "`n✅ RDP Address: $address"
+              Write-Host "Username: runneradmin"
+              Write-Host "Password: MySecureP@ssw0rd!"
               $success = $true
               break
             } catch {
-              Write-Host "Waiting for ngrok tunnel... retry $i"
               Start-Sleep -Seconds 5
+              Write-Host "⏳ Waiting for ngrok to respond..."
             }
           }
 
           if (-not $success) {
-            Get-Content ngrok.log | Out-String | Write-Host
-            throw "ngrok tunnel could not be retrieved."
+            Get-Content ngrok.log | Write-Host
+            throw "❌ Failed to get ngrok tunnel"
           }
