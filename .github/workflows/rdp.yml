@@ -15,25 +15,39 @@ jobs:
 
       - name: Authenticate ngrok
         run: |
-          $NGROK_AUTH_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
-          & "$env:USERPROFILE\ngrok.exe" authtoken $NGROK_AUTH_TOKEN
+          $env:NGROK_AUTH_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
+          & "$env:USERPROFILE\ngrok.exe" authtoken $env:NGROK_AUTH_TOKEN
 
       - name: Enable RDP Access
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Start ngrok TCP tunnel
-        run: Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389"
-
-      - name: Wait and get tunnel info
+      - name: Start ngrok in background
         run: |
-          Start-Sleep -Seconds 10
-          Invoke-WebRequest http://127.0.0.1:4040/api/tunnels > tunnels.json
-          Get-Content tunnels.json
+          Start-Job -ScriptBlock {
+            & "$env:USERPROFILE\ngrok.exe" tcp 3389
+          }
+          Start-Sleep -Seconds 15
 
-      - name: Show ngrok tunnel address
+      - name: Wait for ngrok tunnel (retry logic)
         run: |
-          $response = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
-          $tcpAddr = $response.tunnels[0].public_url -replace "tcp://", ""
-          Write-Host "RDP address: $tcpAddr"
+          $retries = 10
+          $tunnel = $null
+          for ($i = 0; $i -lt $retries; $i++) {
+            try {
+              $tunnel = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+              break
+            } catch {
+              Write-Host "Tunnel not ready yet, retrying in 5 seconds..."
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          if (-not $tunnel) {
+            throw "ngrok tunnel could not be retrieved after multiple attempts."
+          }
+
+          $tcpAddr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
+          Write-Host "`n✅ RDP Address: $tcpAddr"
+          Write-Host "ℹ️ Username: runneradmin"
