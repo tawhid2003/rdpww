@@ -6,6 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-latest
+
     steps:
       - name: Download and extract ngrok
         run: |
@@ -18,36 +19,37 @@ jobs:
           $env:NGROK_AUTH_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
           & "$env:USERPROFILE\ngrok.exe" authtoken $env:NGROK_AUTH_TOKEN
 
-      - name: Enable RDP Access
+      - name: Enable RDP
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Start ngrok in background
+      - name: Start ngrok tunnel and wait
         run: |
-          Start-Job -ScriptBlock {
-            & "$env:USERPROFILE\ngrok.exe" tcp 3389
-          }
+          Start-Process -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput ngrok.log
+          Write-Host "Waiting for ngrok to initialize..."
           Start-Sleep -Seconds 15
 
-      - name: Wait for ngrok tunnel (retry logic)
+      - name: Read tunnel address
         run: |
           $retries = 10
-          $tunnel = $null
+          $success = $false
+
           for ($i = 0; $i -lt $retries; $i++) {
             try {
               $tunnel = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+              $tcpAddr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
+              Write-Host "`n✅ RDP Address: $tcpAddr"
+              Write-Host "ℹ️ Username: runneradmin"
+              $success = $true
               break
             } catch {
-              Write-Host "Tunnel not ready yet, retrying in 5 seconds..."
+              Write-Host "Waiting for ngrok tunnel... retry $i"
               Start-Sleep -Seconds 5
             }
           }
 
-          if (-not $tunnel) {
-            throw "ngrok tunnel could not be retrieved after multiple attempts."
+          if (-not $success) {
+            Get-Content ngrok.log | Out-String | Write-Host
+            throw "ngrok tunnel could not be retrieved."
           }
-
-          $tcpAddr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
-          Write-Host "`n✅ RDP Address: $tcpAddr"
-          Write-Host "ℹ️ Username: runneradmin"
