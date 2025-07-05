@@ -7,11 +7,11 @@ jobs:
   rdp:
     runs-on: windows-latest
     steps:
-      - name: Download ngrok
+      - name: Download and extract ngrok
         run: |
           Invoke-WebRequest -Uri https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
-          move ngrok.exe $env:USERPROFILE
+          Expand-Archive ngrok.zip -DestinationPath ngrok
+          Move-Item ngrok\ngrok.exe $env:USERPROFILE\ngrok.exe
 
       - name: Authenticate ngrok
         run: |
@@ -26,7 +26,7 @@ jobs:
       - name: Start ngrok TCP tunnel
         run: Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389"
 
-      - name: Wait for tunnel info
+      - name: Wait and get tunnel info
         run: |
           Start-Sleep -Seconds 10
           Invoke-WebRequest http://127.0.0.1:4040/api/tunnels > tunnels.json
