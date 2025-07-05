@@ -1,43 +1,22 @@
-name: RDP via Ngrok (Stable)
+- name: Start ngrok tunnel and show raw output
+  shell: powershell
+  run: |
+    Write-Host "`n🔌 Starting ngrok...`n"
+    
+    # Start ngrok and capture ALL output (stdout + stderr)
+    & "$env:USERPROFILE\ngrok.exe" tcp 3389 *>&1 | Tee-Object ngrok_full.log
 
-on:
-  workflow_dispatch:
+    # Print full output for inspection
+    Write-Host "`n📄 ngrok full output:"
+    Get-Content ngrok_full.log
 
-jobs:
-  rdp:
-    runs-on: windows-latest
-
-    steps:
-      - name: Enable RDP & set password
-        run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          net user runneradmin MySecureP@ssw0rd!
-
-      - name: Download and install ngrok
-        run: |
-          Invoke-WebRequest -Uri https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath ngrok
-          Move-Item ngrok\ngrok.exe $env:USERPROFILE\ngrok.exe
-          & "$env:USERPROFILE\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-
-      - name: Start ngrok tunnel and output address
-        shell: powershell
-        run: |
-          Write-Host "`n🔌 Starting ngrok...`n"
-          $ngrok = Start-Process -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput "ngrok.log" -PassThru
-          Start-Sleep -Seconds 10
-          
-          # Read and show ngrok output
-          $output = Get-Content ngrok.log -Raw
-          Write-Host "`n🔍 ngrok output:`n$output"
-
-          # Extract TCP address
-          if ($output -match "tcp://[^\s]+") {
-            $tcp = $matches[0] -replace "tcp://", ""
-            Write-Host "`n✅ RDP Address: $tcp"
-            Write-Host "Username: runneradmin"
-            Write-Host "Password: MySecureP@ssw0rd!"
-          } else {
-            throw "❌ ngrok did not start a tunnel. Check ngrok.log above."
-          }
+    # Try to extract the public TCP address
+    $log = Get-Content ngrok_full.log -Raw
+    if ($log -match "tcp://[^\s]+") {
+      $tcp = $matches[0] -replace "tcp://", ""
+      Write-Host "`n✅ RDP Address: $tcp"
+      Write-Host "Username: runneradmin"
+      Write-Host "Password: MySecureP@ssw0rd!"
+    } else {
+      throw "❌ ngrok did not start a TCP tunnel. See log above."
+    }
