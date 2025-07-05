@@ -1,22 +1,39 @@
-services:
-  windows:
-    image: dockurr/windows
-    container_name: windows
-    environment:
-      VERSION: "10"
-      USERNAME: "MASTER"
-      PASSWORD: "admin@123"
-      RAM_SIZE: "4G"
-      CPU_CORES: "4"
-      DISK_SIZE: "400G"
-      DISK2_SIZE: "100G"
-    devices:
-      - /dev/kvm
-      - /dev/net/tun
-    cap_add:
-      - NET_ADMIN
-    ports:
-      - "8006:8006"
-      - "3389:3389/tcp"
-      - "3389:3389/udp"
-    stop_grace_period: 2m
+name: Enable RDP to Windows Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    steps:
+      - name: Download ngrok
+        run: |
+          Invoke-WebRequest -Uri https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip
+          move ngrok.exe $env:USERPROFILE
+
+      - name: Authenticate ngrok
+        run: |
+          $NGROK_AUTH_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
+          & "$env:USERPROFILE\ngrok.exe" authtoken $NGROK_AUTH_TOKEN
+
+      - name: Enable RDP Access
+        run: |
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: Start ngrok TCP tunnel
+        run: Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok.exe" -ArgumentList "tcp 3389"
+
+      - name: Wait for tunnel info
+        run: |
+          Start-Sleep -Seconds 10
+          Invoke-WebRequest http://127.0.0.1:4040/api/tunnels > tunnels.json
+          Get-Content tunnels.json
+
+      - name: Show ngrok tunnel address
+        run: |
+          $response = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+          $tcpAddr = $response.tunnels[0].public_url -replace "tcp://", ""
+          Write-Host "RDP address: $tcpAddr"
